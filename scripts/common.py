@@ -27,7 +27,6 @@ PLAN_LOGIN_URL = f"{PLAN_BASE_URL}/login"
 
 WWW_BASE_URL = "https://www.ckziu.jaworzno.pl"
 ZASTEPSTWA_URL = f"{WWW_BASE_URL}/zastepstwa/"
-WP_LOGIN_URL = f"{WWW_BASE_URL}/wp-login.php"
 
 # Domyślny User-Agent przeglądarki - niektóre serwery (w tym WordPress
 # z pewnymi wtyczkami bezpieczeństwa) blokują domyślny User-Agent
@@ -82,21 +81,18 @@ def get_zastepstwa_session() -> requests.Session:
     """
     Zaloguj się do https://www.ckziu.jaworzno.pl/zastepstwa/ i zwróć sesję.
 
-    Strona "/zastepstwa/" jest chroniona standardowym mechanizmem
-    WordPressa "Ochrona hasłem" (Password Protected post/page). Logowanie
-    NIE odbywa się przez POST na "/zastepstwa/" samej, a przez:
+    Strona "/zastepstwa/" ma WŁASNY formularz logowania (nie standardowy
+    mechanizm WordPress "post password"). Formularz wygląda tak:
 
-        POST https://www.ckziu.jaworzno.pl/wp-login.php?action=postpass
-        Content-Type: application/x-www-form-urlencoded
-        pola: post_password=<haslo>, Submit=Submit
+        <form method="POST" action="">
+          <input type="password" name="pass">
+          <input type="submit" name="submit" value="Sprawdź">
+        </form>
 
-    Po sukcesie WordPress odpowiada przekierowaniem (302) z powrotem na
-    stronę i ustawia ciasteczko "wp-postpass_<hash>" - to ono odblokowuje
-    treść przy kolejnych żądaniach GET na "/zastepstwa/".
-
-    Niektóre (starsze) instalacje WordPressa używają pola "pwd" zamiast
-    "post_password" - wysyłamy oba na wszelki wypadek, WordPress
-    zignoruje nieznane pole.
+    `action=""` oznacza POST na ten sam adres (https://.../zastepstwa/).
+    Po prawidłowym haśle serwer ustawia sesję (cookie PHP) i przy
+    kolejnych żądaniach GET na "/zastepstwa/" zwraca już treść zastępstw
+    zamiast formularza "Podaj hasło:".
     """
     if not SCHOOL_PASSWORD:
         raise UpstreamError("Brak SCHOOL_PASSWORD w zmiennych środowiskowych")
@@ -105,23 +101,20 @@ def get_zastepstwa_session() -> requests.Session:
     session.headers.update(DEFAULT_HEADERS)
 
     response = session.post(
-        f"{WP_LOGIN_URL}?action=postpass",
+        ZASTEPSTWA_URL,
         data={
-            "post_password": SCHOOL_PASSWORD,
-            "pwd": SCHOOL_PASSWORD,
-            "Submit": "Submit",
+            "pass": SCHOOL_PASSWORD,
+            "submit": "Sprawdź",
         },
         timeout=REQUEST_TIMEOUT,
         allow_redirects=True,
     )
     response.raise_for_status()
 
-    # Sprawdzenie sukcesu logowania: musi istnieć ciasteczko wp-postpass_*
-    has_postpass_cookie = any(name.startswith("wp-postpass_") for name in session.cookies.keys())
-    if not has_postpass_cookie:
+    if "Podaj hasło" in response.text:
         raise UpstreamError(
             "Logowanie do /zastepstwa/ nie powiodło się - "
-            "nie otrzymano ciasteczka wp-postpass_* z wp-login.php?action=postpass"
+            "po POST z polami pass/submit serwer wciąż zwraca formularz logowania"
         )
 
     return session
@@ -132,14 +125,14 @@ def fetch_zastepstwa_html(session: requests.Session) -> str:
     response = session.get(ZASTEPSTWA_URL, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
 
-    if "Podaj hasło" in response.text or "post_password" in response.text:
-        # Sesja/ciasteczko nie odblokowało treści - zaloguj się jeszcze raz.
+    if "Podaj hasło" in response.text:
+        # Sesja wygasła w trakcie - zaloguj się jeszcze raz.
         session = get_zastepstwa_session()
         response = session.get(ZASTEPSTWA_URL, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
-    if "Podaj hasło" in response.text or "post_password" in response.text:
-        raise UpstreamError("Upstream /zastepstwa/ nadal zwraca formularz logowania po postpass")
+    if "Podaj hasło" in response.text:
+        raise UpstreamError("Upstream /zastepstwa/ nadal zwraca formularz logowania")
 
     return response.text
 
