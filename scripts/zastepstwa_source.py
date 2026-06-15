@@ -277,9 +277,20 @@ def group_overrides_by_teacher(overrides: list[dict[str, Any]]) -> dict[str, lis
     return grouped
 
 
+def fetch_zastepstwa_html(session) -> str:
+    """
+    Pobiera surowy kod HTML ze strony zastępstw przy użyciu uwierzytelnionej sesji.
+    """
+    url = "https://www.ckziu.jaworzno.pl/zastepstwa/"
+    response = session.get(url)
+    response.raise_for_status()
+    return response.text
+
+
 __all__ = [
     "parse_nieobecni",
     "parse_overrides",
     "group_overrides_by_teacher",
     "is_teacher_absent_in_slot",
+    "fetch_zastepstwa_html",
 ]
