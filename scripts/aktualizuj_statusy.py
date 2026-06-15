@@ -39,13 +39,13 @@ from firebase_admin import credentials, firestore
 
 from common import UpstreamError, normalize_teacher_name
 from plan_source import get_plan_session, get_schedule
+# POPRAWIONY KOD w aktualizuj_statusy.py:
+from common import fetch_zastepstwa_html  # Jeśli funkcja pobierająca jest w common
 from zastepstwa_source import (
-    fetch_zastepstwa_html,
-    get_zastepstwa_session,
-    group_overrides_by_teacher,
-    is_teacher_absent_in_slot,
     parse_nieobecni,
     parse_overrides,
+    group_overrides_by_teacher,
+    is_teacher_absent_in_slot,
 )
 
 
