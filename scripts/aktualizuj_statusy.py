@@ -37,10 +37,13 @@ from zoneinfo import ZoneInfo
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-from common import UpstreamError, normalize_teacher_name
+from common import (
+    UpstreamError,
+    fetch_zastepstwa_html,
+    get_zastepstwa_session,
+    normalize_teacher_name,
+)
 from plan_source import get_plan_session, get_schedule
-# POPRAWIONY KOD w aktualizuj_statusy.py:
-from common import fetch_zastepstwa_html  # Jeśli funkcja pobierająca jest w common
 from zastepstwa_source import (
     parse_nieobecni,
     parse_overrides,
