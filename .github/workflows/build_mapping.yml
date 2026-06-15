@@ -1,0 +1,45 @@
+name: Zbuduj mapowanie nauczycieli
+
+on:
+  workflow_dispatch:
+    inputs:
+      brute_force_max:
+        description: "Górna granica zakresu teacherid przy trybie brute-force"
+        required: false
+        default: "150"
+  # Odśwież automatycznie raz w tygodniu (w nocy z niedzieli na poniedziałek) -
+  # gdyby zmieniła się kadra, mapowanie sam się dociągnie. Można usunąć,
+  # jeśli wolisz odpalać tylko ręcznie.
+  schedule:
+    - cron: "0 1 * * 0"
+
+jobs:
+  build-mapping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Build teacher mapping
+        working-directory: scripts
+        env:
+          SCHOOL_PASSWORD: ${{ secrets.SCHOOL_PASSWORD }}
+          BRUTE_FORCE_MAX: ${{ github.event.inputs.brute_force_max || '150' }}
+        run: python build_teacher_mapping.py
+
+      - name: Commit updated mapping
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scripts/nauczyciele_mapping.json
+          git diff --cached --quiet || git commit -m "chore: aktualizacja mapowania nauczycieli"
+          git push

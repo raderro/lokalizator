@@ -1,0 +1,48 @@
+name: Aktualizuj statusy nauczycieli
+
+on:
+  schedule:
+    # Cron działa w UTC. Ustawiamy szeroki zakres godzin (4:00-17:00 UTC),
+    # który pokrywa okno 6:00-18:30 czasu Europe/Warsaw przez cały rok
+    # (niezależnie od zmiany czasu letni/zimowy: UTC+1 zimą, UTC+2 latem).
+    # Skrypt aktualizuj_statusy.py i tak sam sprawdza dokładne okno
+    # 6:00-18:30 w czasie polskim i kończy się natychmiast poza nim,
+    # więc dodatkowe "zbędne" odpalenia na początku/końcu zakresu nie
+    # generują żadnej pracy.
+    - cron: "*/5 4-16 * * 1-5"
+  workflow_dispatch: {}
+
+# Zapobiega nakładaniu się dwóch równoległych przebiegów, jeśli
+# poprzedni jeszcze nie zdążył się zakończyć.
+concurrency:
+  group: aktualizuj-statusy
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('scripts/requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Run update script
+        working-directory: scripts
+        env:
+          SCHOOL_PASSWORD: ${{ secrets.SCHOOL_PASSWORD }}
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: python aktualizuj_statusy.py
