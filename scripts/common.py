@@ -25,7 +25,19 @@ SCHOOL_PASSWORD = os.environ.get("SCHOOL_PASSWORD", "")
 PLAN_BASE_URL = "https://plan.ckziu.jaworzno.pl"
 PLAN_LOGIN_URL = f"{PLAN_BASE_URL}/login"
 
-ZASTEPSTWA_URL = "https://www.ckziu.jaworzno.pl/zastepstwa/"
+WWW_BASE_URL = "https://www.ckziu.jaworzno.pl"
+ZASTEPSTWA_URL = f"{WWW_BASE_URL}/zastepstwa/"
+WP_LOGIN_URL = f"{WWW_BASE_URL}/wp-login.php"
+
+# Domyślny User-Agent przeglądarki - niektóre serwery (w tym WordPress
+# z pewnymi wtyczkami bezpieczeństwa) blokują domyślny User-Agent
+# biblioteki `requests`.
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
 
 REQUEST_TIMEOUT = 20
 
@@ -51,17 +63,17 @@ def get_plan_session() -> requests.Session:
         raise UpstreamError("Brak SCHOOL_PASSWORD w zmiennych środowiskowych")
 
     session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+
     response = session.post(
         PLAN_LOGIN_URL,
         data={"password": SCHOOL_PASSWORD},
         timeout=REQUEST_TIMEOUT,
+        allow_redirects=True,
     )
     response.raise_for_status()
-    if "Podaj hasło" in response.text or "password" in response.text.lower() and "login" in response.url.lower():
-        # Dodatkowe zabezpieczenie: jeśli po POST nadal jesteśmy na stronie
-        # logowania, logowanie się nie powiodło.
-        if "Podaj hasło" in response.text:
-            raise UpstreamError("Logowanie do plan.ckziu.jaworzno.pl nie powiodło się")
+    if "Podaj hasło" in response.text:
+        raise UpstreamError("Logowanie do plan.ckziu.jaworzno.pl nie powiodło się")
 
     return session
 
@@ -70,21 +82,47 @@ def get_zastepstwa_session() -> requests.Session:
     """
     Zaloguj się do https://www.ckziu.jaworzno.pl/zastepstwa/ i zwróć sesję.
 
-    Strona WordPressowa - formularz logowania to POST z polami
-    'password' i 'check' na ten sam URL, sesja trzymana w cookies.
+    Strona "/zastepstwa/" jest chroniona standardowym mechanizmem
+    WordPressa "Ochrona hasłem" (Password Protected post/page). Logowanie
+    NIE odbywa się przez POST na "/zastepstwa/" samej, a przez:
+
+        POST https://www.ckziu.jaworzno.pl/wp-login.php?action=postpass
+        Content-Type: application/x-www-form-urlencoded
+        pola: post_password=<haslo>, Submit=Submit
+
+    Po sukcesie WordPress odpowiada przekierowaniem (302) z powrotem na
+    stronę i ustawia ciasteczko "wp-postpass_<hash>" - to ono odblokowuje
+    treść przy kolejnych żądaniach GET na "/zastepstwa/".
+
+    Niektóre (starsze) instalacje WordPressa używają pola "pwd" zamiast
+    "post_password" - wysyłamy oba na wszelki wypadek, WordPress
+    zignoruje nieznane pole.
     """
     if not SCHOOL_PASSWORD:
         raise UpstreamError("Brak SCHOOL_PASSWORD w zmiennych środowiskowych")
 
     session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+
     response = session.post(
-        ZASTEPSTWA_URL,
-        data={"password": SCHOOL_PASSWORD, "check": "Sprawdź"},
+        f"{WP_LOGIN_URL}?action=postpass",
+        data={
+            "post_password": SCHOOL_PASSWORD,
+            "pwd": SCHOOL_PASSWORD,
+            "Submit": "Submit",
+        },
         timeout=REQUEST_TIMEOUT,
+        allow_redirects=True,
     )
     response.raise_for_status()
-    if "Podaj hasło" in response.text:
-        raise UpstreamError("Logowanie do /zastepstwa/ nie powiodło się")
+
+    # Sprawdzenie sukcesu logowania: musi istnieć ciasteczko wp-postpass_*
+    has_postpass_cookie = any(name.startswith("wp-postpass_") for name in session.cookies.keys())
+    if not has_postpass_cookie:
+        raise UpstreamError(
+            "Logowanie do /zastepstwa/ nie powiodło się - "
+            "nie otrzymano ciasteczka wp-postpass_* z wp-login.php?action=postpass"
+        )
 
     return session
 
@@ -92,13 +130,17 @@ def get_zastepstwa_session() -> requests.Session:
 def fetch_zastepstwa_html(session: requests.Session) -> str:
     """Pobierz HTML strony zastępstw, z jednorazowym retry po ponownym logowaniu."""
     response = session.get(ZASTEPSTWA_URL, timeout=REQUEST_TIMEOUT)
-    if "Podaj hasło" in response.text:
-        # Sesja wygasła w trakcie - zaloguj się jeszcze raz.
+    response.raise_for_status()
+
+    if "Podaj hasło" in response.text or "post_password" in response.text:
+        # Sesja/ciasteczko nie odblokowało treści - zaloguj się jeszcze raz.
         session = get_zastepstwa_session()
         response = session.get(ZASTEPSTWA_URL, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
-    if "Podaj hasło" in response.text:
-        raise UpstreamError("Upstream /zastepstwa/ nadal zwraca formularz logowania")
+        response.raise_for_status()
+
+    if "Podaj hasło" in response.text or "post_password" in response.text:
+        raise UpstreamError("Upstream /zastepstwa/ nadal zwraca formularz logowania po postpass")
+
     return response.text
 
 
