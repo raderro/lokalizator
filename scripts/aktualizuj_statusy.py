@@ -35,6 +35,7 @@ from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 
 import firebase_admin
+import requests
 from firebase_admin import credentials, firestore
 
 from common import UpstreamError, fetch_zastepstwa_html, get_zastepstwa_session, normalize_teacher_name
@@ -253,12 +254,35 @@ def _format_location(sala: str) -> str:
 # Główna pętla
 # ---------------------------------------------------------------------------
 
+def diagnose_connectivity() -> None:
+    """
+    Szybki test łączności z oboma hostami (osobny serwer dla planu i dla
+    strony WWW/zastępstw - różne hostingi mogą mieć różne firewalle).
+    Wynik trafia do logów, niezależnie od tego, czy faktyczne zapytania
+    się powiodą - pomaga to odróżnić "host nieosiągalny z tego runnera"
+    od "logowanie się nie powiodło".
+    """
+    import requests as _requests
+
+    for label, url in (
+        ("plan.ckziu.jaworzno.pl", "https://plan.ckziu.jaworzno.pl"),
+        ("www.ckziu.jaworzno.pl", "https://www.ckziu.jaworzno.pl"),
+    ):
+        try:
+            resp = _requests.head(url, timeout=10)
+            print(f"[diagnoza] {label}: OK (status {resp.status_code})")
+        except _requests.exceptions.RequestException as exc:
+            print(f"[diagnoza] {label}: NIEOSIĄGALNY z tego runnera ({type(exc).__name__}: {exc})", file=sys.stderr)
+
+
 def main() -> None:
     now = datetime.now(TZ)
 
     if not is_within_active_window(now):
         print(f"[{now.isoformat()}] Poza oknem aktywności (6:00-18:30, pon-pt) - kończę.")
         return
+
+    diagnose_connectivity()
 
     teacher_mapping = load_teacher_mapping()
     if not teacher_mapping:
@@ -271,6 +295,18 @@ def main() -> None:
         zastepstwa_html = fetch_zastepstwa_html(zastepstwa_session)
     except UpstreamError as exc:
         print(f"Błąd logowania/pobierania zastępstw: {exc}", file=sys.stderr)
+        return
+    except requests.exceptions.RequestException as exc:
+        print(
+            f"Błąd sieciowy przy łączeniu z www.ckziu.jaworzno.pl "
+            f"({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
+        print(
+            "Host może być nieosiągalny z zakresu IP tego runnera "
+            "(np. firewall hostingu blokuje ruch z chmur typu Azure/GitHub Actions).",
+            file=sys.stderr,
+        )
         return
 
     nieobecni_raw = parse_nieobecni(zastepstwa_html)
@@ -286,6 +322,13 @@ def main() -> None:
         plan_session = get_plan_session()
     except UpstreamError as exc:
         print(f"Błąd logowania do planu: {exc}", file=sys.stderr)
+        return
+    except requests.exceptions.RequestException as exc:
+        print(
+            f"Błąd sieciowy przy łączeniu z plan.ckziu.jaworzno.pl "
+            f"({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
         return
 
     db = init_firestore()
